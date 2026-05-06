@@ -38,21 +38,10 @@ chmod +x runme.sh
 ./runme.sh
 ```
 
-5. Посмотреть актуальный отчёт
+5. Посмотреть log файл
 ```bush
-cat result.txt
+cat /tmp/myinit.log
 ```
-### Если программа завершилась принудительно (раньше)
-
-Можно взглянуть на некоторую статистику.
-
-```bush
-cat stats.txt
-```
-
-### Готовые отчёты
-
-`result.txt` прошлых (локальных) запусков хранятся в `last_result/`
 
 ## Лог успешных запусков
 - `Darwin MacBook-Air-Selin.local 22.6.0 Darwin Kernel Version 22.6.0: Wed Jul  5 22:22:52 PDT 2023; root:xnu-8796.141.3~6/RELEASE_ARM64_T8103 arm64`
