@@ -13,34 +13,39 @@
 
 ## Локальный запуск
 1. Клонируем репозиторий
-```bush
+```bash
 git clone https://github.com/adrezoff/unix2026_selin_task_3.git
 ```
 2. Переходим в корень репозитория
-```bush
+```bash
 cd unix2026_selin_task_3
 ```
 3. Компилируем основной алгоритм
-```bush
+```bash
 make clean
 ```
-```bush
+```bash
 make
 ```
 
 3. Выдаём права runme на исполнение
-```bush
+```bash
 chmod +x runme.sh
 ```
 
-4. Запускаем скрипт (время выполнения ~ 5 минут)
-```bush
+4. Запускаем скрипт 
+```bash
 ./runme.sh
 ```
 
 5. Посмотреть log файл
-```bush
+```bash
 cat /tmp/myinit.log
+```
+
+6. Оставновка демона
+```bash
+pkill myinit
 ```
 
 ## Лог успешных запусков
