@@ -4,7 +4,7 @@ CUR=$(pwd)
 CFG="$CUR/myinit.cfg"
 LOG="/tmp/myinit.log"
 
-# Очистка предыдущих запусков и ОГРОМНОГО лога
+# Очистка предыдущих запусков и лога
 pkill -9 myinit 2>/dev/null
 pkill -9 sleep 2>/dev/null
 rm -f "$LOG"
@@ -15,10 +15,13 @@ echo "/bin/sleep $CUR/in $CUR/out1" > "$CFG"
 echo "/bin/sleep $CUR/in $CUR/out2" >> "$CFG"
 echo "/bin/sleep $CUR/in $CUR/out3" >> "$CFG"
 
-echo "--- КОМПИЛЯЦИЯ ---"
-gcc myinit.c -o myinit
-
 echo "--- СТАРТ ---"
+# Проверяем, существует ли файл перед запуском
+if [ ! -f "./myinit" ]; then
+    echo "Ошибка: исполняемый файл myinit не найден. Сначала выполните make."
+    exit 1
+fi
+
 ./myinit "$CFG"
 sleep 2
 
@@ -26,7 +29,6 @@ echo "--- ПРОВЕРКА PS (3 sleep) ---"
 ps -ef | grep "[s]leep"
 
 echo "--- УБИВАЕМ ПРОЦЕСС НОМЕР 2 ---"
-# Берем PID второй строки из вывода ps
 P2=$(ps -ef | grep "[s]leep" | awk 'NR==2{print $2}')
 if [ ! -z "$P2" ]; then
     kill -9 $P2

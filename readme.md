@@ -20,7 +20,7 @@ git clone https://github.com/adrezoff/unix2026_selin_task_3.git
 ```bash
 cd unix2026_selin_task_3
 ```
-3. Компилируем основной алгоритм
+3. Чистим проект и компилируем программу
 ```bash
 make clean
 ```
