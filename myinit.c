@@ -87,8 +87,8 @@ void handle_hup(int sig) {
     }
     load_config();
     for (int i = 0; i < pid_count; i++) {
-        run(i)
-    };
+        run(i);
+    }
 }
 
 int main(int argc, char **argv) {
