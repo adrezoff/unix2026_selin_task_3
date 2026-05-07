@@ -13,11 +13,11 @@
 #define LOG_PATH "/tmp/myinit.log"
 
 typedef struct {
-    char path[256];
-    char in[256];
-    char out[256];
-    pid_t pid;
-} ChildProcess;
+    char path[256]; // Путь к исполняемому файлу
+    char in[256];   // Файл перенаправления stdin
+    char out[256];  // Файл перенаправления stdout
+    pid_t pid;      // текущий pid процесса
+} ChildProcess; // Структура для хранения данных о дочернем процессе
 
 ChildProcess pool[MAXPROC];
 int pid_count = 0;
@@ -31,7 +31,8 @@ void write_log(const char *msg) {
     }
 }
 
-void spawn(int i) {
+// запуск дочернего процесса
+void run(int i) {
     if (pool[i].path[0] != '/' || pool[i].in[0] != '/' || pool[i].out[0] != '/') {
         write_log("Error: Non-absolute path detected!");
         return;
@@ -46,14 +47,14 @@ void spawn(int i) {
         dup2(fd_in, STDIN_FILENO);
         dup2(fd_out, STDOUT_FILENO);
 
-        // Перенаправляем stderr в /dev/null, чтобы не спамить в консоль
+        // Подавляем stderr, чтобы ошибки дочерних процессов не шли в консоль
         int fd_err = open("/dev/null", O_WRONLY);
         dup2(fd_err, STDERR_FILENO);
 
         close(fd_in);
         close(fd_out);
 
-        // ИСПРАВЛЕНИЕ: Добавляем аргумент "100", чтобы sleep не завершался сразу
+        // 100 — аргумент для sleep, чтобы процесс жил дольше, логи становится понятнее
         execl(pool[i].path, pool[i].path, "100", (char *)NULL);
         exit(1);
     } else if (cpid > 0) {
@@ -75,13 +76,19 @@ void load_config() {
     fclose(f);
 }
 
+// убивает старые дочерние процессы и перечитывает конфиг
 void handle_hup(int sig) {
-    write_log("SIGHUP: reloading config and restarting processes");
+    write_log("SIGHUP: reloading config and restarting proceses");
     for (int i = 0; i < pid_count; i++) {
-        if (pool[i].pid > 0) kill(pool[i].pid, SIGTERM);
+        if (pool[i].pid > 0)
+        {
+            kill(pool[i].pid, SIGTERM);
+        }
     }
     load_config();
-    for (int i = 0; i < pid_count; i++) spawn(i);
+    for (int i = 0; i < pid_count; i++) {
+        run(i)
+    };
 }
 
 int main(int argc, char **argv) {
@@ -101,11 +108,13 @@ int main(int argc, char **argv) {
     chdir("/");
 
     write_log("--- myinit daemon started ---");
+
     signal(SIGHUP, handle_hup);
+
     load_config();
+    for (int i = 0; i < pid_count; i++) run(i);
 
-    for (int i = 0; i < pid_count; i++) spawn(i);
-
+    // мониторим состояния дочерних процессов
     while (1) {
         int status;
         pid_t terminated_pid = waitpid(-1, &status, 0);
@@ -115,7 +124,8 @@ int main(int argc, char **argv) {
                     char buf[256];
                     sprintf(buf, "Process %d died. Restarting...", terminated_pid);
                     write_log(buf);
-                    spawn(i);
+                    // перезапуск упавшего процесса
+                    run(i);
                     break;
                 }
             }

@@ -10,13 +10,11 @@ pkill -9 sleep 2>/dev/null
 rm -f "$LOG"
 touch "$CUR/in"
 
-# 1. Создаем конфиг
 echo "/bin/sleep $CUR/in $CUR/out1" > "$CFG"
 echo "/bin/sleep $CUR/in $CUR/out2" >> "$CFG"
 echo "/bin/sleep $CUR/in $CUR/out3" >> "$CFG"
 
 echo "--- СТАРТ ---"
-# Проверяем, существует ли файл перед запуском
 if [ ! -f "./myinit" ]; then
     echo "Ошибка: исполняемый файл myinit не найден. Сначала выполните make."
     exit 1
