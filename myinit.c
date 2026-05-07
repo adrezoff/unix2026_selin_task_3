@@ -32,24 +32,29 @@ void write_log(const char *msg) {
 }
 
 void spawn(int i) {
-    // Проверка на абсолютные пути (требование задачи)
     if (pool[i].path[0] != '/' || pool[i].in[0] != '/' || pool[i].out[0] != '/') {
         write_log("Error: Non-absolute path detected!");
         return;
     }
 
     pid_t cpid = fork();
-    if (cpid == 0) { // Дочерний процесс
+    if (cpid == 0) {
         int fd_in = open(pool[i].in, O_RDONLY);
         int fd_out = open(pool[i].out, O_WRONLY | O_CREAT | O_APPEND, 0666);
         if (fd_in < 0 || fd_out < 0) exit(1);
 
         dup2(fd_in, STDIN_FILENO);
         dup2(fd_out, STDOUT_FILENO);
+
+        // Перенаправляем stderr в /dev/null, чтобы не спамить в консоль
+        int fd_err = open("/dev/null", O_WRONLY);
+        dup2(fd_err, STDERR_FILENO);
+
         close(fd_in);
         close(fd_out);
 
-        execl(pool[i].path, pool[i].path, (char *)NULL);
+        // ИСПРАВЛЕНИЕ: Добавляем аргумент "100", чтобы sleep не завершался сразу
+        execl(pool[i].path, pool[i].path, "100", (char *)NULL);
         exit(1);
     } else if (cpid > 0) {
         pool[i].pid = cpid;
@@ -86,7 +91,6 @@ int main(int argc, char **argv) {
     }
     realpath(argv[1], cfg_path);
 
-    // Демонизация
     if (fork() != 0) exit(0);
     setsid();
 

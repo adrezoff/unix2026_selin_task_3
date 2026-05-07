@@ -4,7 +4,7 @@ CUR=$(pwd)
 CFG="$CUR/myinit.cfg"
 LOG="/tmp/myinit.log"
 
-# Очистка
+# Очистка предыдущих запусков и ОГРОМНОГО лога
 pkill -9 myinit 2>/dev/null
 pkill -9 sleep 2>/dev/null
 rm -f "$LOG"
@@ -26,14 +26,18 @@ echo "--- ПРОВЕРКА PS (3 sleep) ---"
 ps -ef | grep "[s]leep"
 
 echo "--- УБИВАЕМ ПРОЦЕСС НОМЕР 2 ---"
+# Берем PID второй строки из вывода ps
 P2=$(ps -ef | grep "[s]leep" | awk 'NR==2{print $2}')
-kill -9 $P2
-sleep 1
+if [ ! -z "$P2" ]; then
+    kill -9 $P2
+    echo "Убит PID $P2. Ждем рестарта..."
+    sleep 1
+fi
 
 echo "--- ПРОВЕРКА ПОСЛЕ РЕСТАРТА ---"
 ps -ef | grep "[s]leep"
 
-echo "--- SIGHUP (1 процесс) ---"
+echo "--- SIGHUP (смена на 1 процесс) ---"
 echo "/bin/sleep $CUR/in $CUR/out_single" > "$CFG"
 pkill -HUP myinit
 sleep 1
