@@ -78,6 +78,7 @@ void load_config() {
 
 // убивает старые дочерние процессы и перечитывает конфиг
 void handle_hup(int sig) {
+    (void)sig; // избавляемся от warning: unused parameter, так как обработчики сингалов обязательно принимают данный параметр
     write_log("SIGHUP: reloading config and restarting proceses");
     for (int i = 0; i < pid_count; i++) {
         if (pool[i].pid > 0)
