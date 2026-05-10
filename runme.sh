@@ -45,7 +45,7 @@ ps -ef | grep "[s]leep"
 
 echo "--- SIGHUP (смена на 1 процесс) ---"
 
-echo "/bin/sleep $CUR/in $CUR/out_single" > "$CFG"
+echo "/bin/sleep 15 $CUR/in $CUR/out_single" > "$CFG"
 
 # отправляем сигнал строго в нужный myinit
 kill -HUP $MYINIT_PID

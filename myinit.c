@@ -181,18 +181,27 @@ int main(int argc, char **argv) {
                 if (pool[i].pid == terminated_pid) {
                     char buf[256];
 
-                    // логируем причину завершения
-                    if (WIFEXITED(status))
+                    if (WIFEXITED(status)) {
+                        int code = WEXITSTATUS(status);
+
                         sprintf(buf, "PID %d exited with code %d",
-                                terminated_pid, WEXITSTATUS(status));
-                    else if (WIFSIGNALED(status))
+                                terminated_pid, code);
+                        write_log(buf);
+
+                        // рестарт только если НЕ нормальный выход
+                        if (code != 0) {
+                            run(i);
+                        }
+                    }
+                    else if (WIFSIGNALED(status)) {
                         sprintf(buf, "PID %d killed by signal %d",
                                 terminated_pid, WTERMSIG(status));
+                        write_log(buf);
 
-                    write_log(buf);
+                        // убит сигналом рестартим
+                        run(i);
+                    }
 
-                    // перезапуск упавшего процесса
-                    run(i);
                     break;
                 }
             }
