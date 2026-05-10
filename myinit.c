@@ -10,17 +10,18 @@
 #include <sys/stat.h>
 #include <sys/resource.h>
 #include <limits.h>
+#include <errno.h>
 
 #define MAXPROC 10
 #define MAXARGS 16
 #define LOG_PATH "/tmp/myinit.log"
 
 typedef struct {
-    char *argv[MAXARGS];   // команда + аргументы из конфига
-    char in[PATH_MAX];     // Файл перенаправления stdin
-    char out[PATH_MAX];    // Файл перенаправления stdout
-    pid_t pid;             // текущий pid процесса
-} ChildProcess; // Структура для хранения данных о дочернем процессе
+    char *argv[MAXARGS];
+    char in[PATH_MAX];
+    char out[PATH_MAX];
+    pid_t pid;
+} ChildProcess;
 
 ChildProcess pool[MAXPROC];
 int pid_count = 0;
@@ -36,13 +37,15 @@ void write_log(const char *msg) {
 
 // освобождаем память под argv при перезагрузке конфига
 void free_argv(ChildProcess *cp) {
-    for (int i = 0; cp->argv[i]; i++) {
-        free(cp->argv[i]);
-        cp->argv[i] = NULL;
+    for (int i = 0; i < MAXARGS; i++) {
+        if (cp->argv[i]) {
+            free(cp->argv[i]);
+            cp->argv[i] = NULL;
+        }
     }
 }
 
-// разбор строки конфига: последние два слова — in/out, всё остальное — команда
+// разбор строки конфига
 void parse_line(char *line, ChildProcess *cp) {
     char *tokens[32];
     int n = 0;
@@ -55,9 +58,16 @@ void parse_line(char *line, ChildProcess *cp) {
 
     if (n < 3) return;
 
-    // realpath гарантирует, что путь абсолютный и существует
-    realpath(tokens[n-2], cp->in);
-    realpath(tokens[n-1], cp->out);
+    // безопасный fallback если realpath не работает
+    if (!realpath(tokens[n-2], cp->in)) {
+        strncpy(cp->in, tokens[n-2], PATH_MAX);
+        cp->in[PATH_MAX-1] = 0;
+    }
+
+    if (!realpath(tokens[n-1], cp->out)) {
+        strncpy(cp->out, tokens[n-1], PATH_MAX);
+        cp->out[PATH_MAX-1] = 0;
+    }
 
     int argc = 0;
     for (int i = 0; i < n-2 && argc < MAXARGS-1; i++) {
@@ -66,35 +76,45 @@ void parse_line(char *line, ChildProcess *cp) {
     cp->argv[argc] = NULL;
 }
 
-// чтение конфигурационного файла
+// чтение конфигурации
 void load_config() {
     FILE *f = fopen(cfg_path, "r");
     if (!f) return;
 
     char line[1024];
+
+    for (int i = 0; i < MAXPROC; i++) {
+        free_argv(&pool[i]);
+        memset(&pool[i], 0, sizeof(ChildProcess));
+    }
+
     pid_count = 0;
 
     while (fgets(line, sizeof(line), f) && pid_count < MAXPROC) {
         parse_line(line, &pool[pid_count]);
+        pool[pid_count].pid = 0;
         pid_count++;
     }
+
     fclose(f);
 }
 
-// запуск дочернего процесса
+// запуск процесса
 void run(int i) {
-    char resolved[PATH_MAX];
+    if (!pool[i].argv[0])  {
+        return;
+    }
 
-    // проверяем путь к исполняемому файлу через realpath
-    if (!realpath(pool[i].argv[0], resolved)) {
-        write_log("Error: Bad executable path!");
+    if (pool[i].pid > 0) {
         return;
     }
 
     pid_t cpid = fork();
+
     if (cpid == 0) {
         int fd_in = open(pool[i].in, O_RDONLY);
-        int fd_out = open(pool[i].out, O_WRONLY | O_CREAT | O_APPEND, 0666);
+        int fd_out = open(pool[i].out, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+
         if (fd_in < 0 || fd_out < 0) exit(1);
 
         dup2(fd_in, STDIN_FILENO);
@@ -103,39 +123,41 @@ void run(int i) {
         close(fd_in);
         close(fd_out);
 
-        // запускаем программу с аргументами из конфига
         execvp(pool[i].argv[0], pool[i].argv);
-        exit(1);
-    } else if (cpid > 0) {
+        exit(127);
+    }
+
+    if (cpid > 0) {
         pool[i].pid = cpid;
+
         char buf[512];
-        sprintf(buf, "Started %s (PID: %d)", pool[i].argv[0], cpid);
+        snprintf(buf, sizeof(buf),
+                 "Started %s (PID: %d)",
+                 pool[i].argv[0], cpid);
         write_log(buf);
     }
 }
 
-// убивает старые дочерние процессы и перечитывает конфиг
+// SIGHUP
 void handle_hup(int sig) {
-    (void)sig; // избавляемся от warning: unused parameter
-    write_log("SIGHUP: reloading config and restarting processes");
+    (void)sig;
+    write_log("SIGHUP: reload");
 
-    // сначала убиваем все старые процессы
     for (int i = 0; i < pid_count; i++) {
         if (pool[i].pid > 0) {
             kill(pool[i].pid, SIGTERM);
         }
     }
 
-    // обязательно дожидаемся их завершения
     for (int i = 0; i < pid_count; i++) {
         if (pool[i].pid > 0) {
             waitpid(pool[i].pid, NULL, 0);
-            free_argv(&pool[i]);
+            pool[i].pid = 0;
         }
     }
 
-    // читаем новый конфиг и стартуем процессы заново
     load_config();
+
     for (int i = 0; i < pid_count; i++) {
         run(i);
     }
@@ -143,13 +165,12 @@ void handle_hup(int sig) {
 
 int main(int argc, char **argv) {
     if (argc < 2 || argv[1][0] != '/') {
-        fprintf(stderr, "Usage: %s /absolute/path/to/config\n", argv[0]);
+        fprintf(stderr, "Usage: %s /config\n", argv[0]);
         exit(1);
     }
 
     realpath(argv[1], cfg_path);
 
-    // демонизация процесса
     if (fork() != 0) exit(0);
     setsid();
 
@@ -159,53 +180,60 @@ int main(int argc, char **argv) {
 
     chdir("/");
 
-    // демон обязан иметь /dev/null на stdin/stdout/stderr
     int fd0 = open("/dev/null", O_RDWR);
     dup2(fd0, 0);
     dup2(fd0, 1);
     dup2(fd0, 2);
 
-    write_log("--- myinit daemon started ---");
+    write_log("--- myinit started ---");
+
+    signal(SIGCHLD, SIG_DFL);
+    signal(SIGPIPE, SIG_IGN);
 
     signal(SIGHUP, handle_hup);
 
     load_config();
-    for (int i = 0; i < pid_count; i++) run(i);
 
-    // мониторим состояния дочерних процессов
+    for (int i = 0; i < pid_count; i++) {
+        run(i);
+    }
+
     while (1) {
         int status;
-        pid_t terminated_pid = waitpid(-1, &status, 0);
-        if (terminated_pid > 0) {
-            for (int i = 0; i < pid_count; i++) {
-                if (pool[i].pid == terminated_pid) {
-                    char buf[256];
+        pid_t pid = waitpid(-1, &status, 0);
 
-                    if (WIFEXITED(status)) {
-                        int code = WEXITSTATUS(status);
+        if (pid <= 0) continue;
 
-                        sprintf(buf, "PID %d exited with code %d",
-                                terminated_pid, code);
-                        write_log(buf);
+        for (int i = 0; i < pid_count; i++) {
 
-                        // рестарт только если НЕ нормальный выход
-                        if (code != 0) {
-                            run(i);
-                        }
-                    }
-                    else if (WIFSIGNALED(status)) {
-                        sprintf(buf, "PID %d killed by signal %d",
-                                terminated_pid, WTERMSIG(status));
-                        write_log(buf);
+            if (pool[i].pid != pid) continue;
 
-                        // убит сигналом рестартим
-                        run(i);
-                    }
+            pool[i].pid = 0;
 
-                    break;
-                }
+            char buf[256];
+
+            if (WIFEXITED(status)) {
+                int code = WEXITSTATUS(status);
+
+                snprintf(buf, sizeof(buf),
+                         "PID %d exited with code %d",
+                         pid, code);
+                write_log(buf);
+
+                // sleep НЕ должен умирать
+                run(i);
             }
+
+            if (WIFSIGNALED(status)) {
+                snprintf(buf, sizeof(buf),
+                         "PID %d killed by signal %d",
+                         pid, WTERMSIG(status));
+                write_log(buf);
+
+                run(i);
+            }
+
+            break;
         }
     }
-    return 0;
 }
