@@ -9,20 +9,22 @@
 #include <sys/wait.h>
 #include <sys/stat.h>
 #include <sys/resource.h>
+#include <limits.h>
 
 #define MAXPROC 10
+#define MAXARGS 16
 #define LOG_PATH "/tmp/myinit.log"
 
 typedef struct {
-    char path[256]; // Путь к исполняемому файлу
-    char in[256];   // Файл перенаправления stdin
-    char out[256];  // Файл перенаправления stdout
-    pid_t pid;      // текущий pid процесса
+    char *argv[MAXARGS];   // команда + аргументы из конфига
+    char in[PATH_MAX];     // Файл перенаправления stdin
+    char out[PATH_MAX];    // Файл перенаправления stdout
+    pid_t pid;             // текущий pid процесса
 } ChildProcess; // Структура для хранения данных о дочернем процессе
 
 ChildProcess pool[MAXPROC];
 int pid_count = 0;
-char cfg_path[256];
+char cfg_path[PATH_MAX];
 
 void write_log(const char *msg) {
     int fd = open(LOG_PATH, O_WRONLY | O_CREAT | O_APPEND, 0666);
@@ -32,10 +34,60 @@ void write_log(const char *msg) {
     }
 }
 
+// освобождаем память под argv при перезагрузке конфига
+void free_argv(ChildProcess *cp) {
+    for (int i = 0; cp->argv[i]; i++) {
+        free(cp->argv[i]);
+        cp->argv[i] = NULL;
+    }
+}
+
+// разбор строки конфига: последние два слова — in/out, всё остальное — команда
+void parse_line(char *line, ChildProcess *cp) {
+    char *tokens[32];
+    int n = 0;
+
+    char *t = strtok(line, " \n");
+    while (t && n < 32) {
+        tokens[n++] = t;
+        t = strtok(NULL, " \n");
+    }
+
+    if (n < 3) return;
+
+    // realpath гарантирует, что путь абсолютный и существует
+    realpath(tokens[n-2], cp->in);
+    realpath(tokens[n-1], cp->out);
+
+    int argc = 0;
+    for (int i = 0; i < n-2 && argc < MAXARGS-1; i++) {
+        cp->argv[argc++] = strdup(tokens[i]);
+    }
+    cp->argv[argc] = NULL;
+}
+
+// чтение конфигурационного файла
+void load_config() {
+    FILE *f = fopen(cfg_path, "r");
+    if (!f) return;
+
+    char line[1024];
+    pid_count = 0;
+
+    while (fgets(line, sizeof(line), f) && pid_count < MAXPROC) {
+        parse_line(line, &pool[pid_count]);
+        pid_count++;
+    }
+    fclose(f);
+}
+
 // запуск дочернего процесса
 void run(int i) {
-    if (pool[i].path[0] != '/' || pool[i].in[0] != '/' || pool[i].out[0] != '/') {
-        write_log("Error: Non-absolute path detected!");
+    char resolved[PATH_MAX];
+
+    // проверяем путь к исполняемому файлу через realpath
+    if (!realpath(pool[i].argv[0], resolved)) {
+        write_log("Error: Bad executable path!");
         return;
     }
 
@@ -48,45 +100,41 @@ void run(int i) {
         dup2(fd_in, STDIN_FILENO);
         dup2(fd_out, STDOUT_FILENO);
 
-        // Подавляем stderr, чтобы ошибки дочерних процессов не шли в консоль
-        int fd_err = open("/dev/null", O_WRONLY);
-        dup2(fd_err, STDERR_FILENO);
-
         close(fd_in);
         close(fd_out);
 
-        // 100 — аргумент для sleep, чтобы процесс жил дольше, логи становится понятнее
-        execl(pool[i].path, pool[i].path, "100", (char *)NULL);
+        // запускаем программу с аргументами из конфига
+        execvp(pool[i].argv[0], pool[i].argv);
         exit(1);
     } else if (cpid > 0) {
         pool[i].pid = cpid;
         char buf[512];
-        sprintf(buf, "Started %s (PID: %d)", pool[i].path, cpid);
+        sprintf(buf, "Started %s (PID: %d)", pool[i].argv[0], cpid);
         write_log(buf);
     }
 }
 
-void load_config() {
-    FILE *f = fopen(cfg_path, "r");
-    if (!f) return;
-    pid_count = 0;
-    while (pid_count < MAXPROC && fscanf(f, "%s %s %s", pool[pid_count].path,
-                  pool[pid_count].in, pool[pid_count].out) == 3) {
-        pid_count++;
-    }
-    fclose(f);
-}
-
 // убивает старые дочерние процессы и перечитывает конфиг
 void handle_hup(int sig) {
-    (void)sig; // избавляемся от warning: unused parameter, так как обработчики сингалов обязательно принимают данный параметр
-    write_log("SIGHUP: reloading config and restarting proceses");
+    (void)sig; // избавляемся от warning: unused parameter
+    write_log("SIGHUP: reloading config and restarting processes");
+
+    // сначала убиваем все старые процессы
     for (int i = 0; i < pid_count; i++) {
-        if (pool[i].pid > 0)
-        {
+        if (pool[i].pid > 0) {
             kill(pool[i].pid, SIGTERM);
         }
     }
+
+    // обязательно дожидаемся их завершения
+    for (int i = 0; i < pid_count; i++) {
+        if (pool[i].pid > 0) {
+            waitpid(pool[i].pid, NULL, 0);
+            free_argv(&pool[i]);
+        }
+    }
+
+    // читаем новый конфиг и стартуем процессы заново
     load_config();
     for (int i = 0; i < pid_count; i++) {
         run(i);
@@ -98,8 +146,10 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Usage: %s /absolute/path/to/config\n", argv[0]);
         exit(1);
     }
+
     realpath(argv[1], cfg_path);
 
+    // демонизация процесса
     if (fork() != 0) exit(0);
     setsid();
 
@@ -108,6 +158,12 @@ int main(int argc, char **argv) {
     for (int fd = 0; fd < (int)flim.rlim_max; fd++) close(fd);
 
     chdir("/");
+
+    // демон обязан иметь /dev/null на stdin/stdout/stderr
+    int fd0 = open("/dev/null", O_RDWR);
+    dup2(fd0, 0);
+    dup2(fd0, 1);
+    dup2(fd0, 2);
 
     write_log("--- myinit daemon started ---");
 
@@ -124,8 +180,17 @@ int main(int argc, char **argv) {
             for (int i = 0; i < pid_count; i++) {
                 if (pool[i].pid == terminated_pid) {
                     char buf[256];
-                    sprintf(buf, "Process %d died. Restarting...", terminated_pid);
+
+                    // логируем причину завершения
+                    if (WIFEXITED(status))
+                        sprintf(buf, "PID %d exited with code %d",
+                                terminated_pid, WEXITSTATUS(status));
+                    else if (WIFSIGNALED(status))
+                        sprintf(buf, "PID %d killed by signal %d",
+                                terminated_pid, WTERMSIG(status));
+
                     write_log(buf);
+
                     // перезапуск упавшего процесса
                     run(i);
                     break;

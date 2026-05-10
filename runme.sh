@@ -20,14 +20,20 @@ if [ ! -f "./myinit" ]; then
     exit 1
 fi
 
-./myinit "$CFG"
+# запускаем в фоне и сохраняем PID (важно для SIGHUP)
+./myinit "$CFG" &
+MYINIT_PID=$!
+
 sleep 2
 
 echo "--- ПРОВЕРКА PS (3 sleep) ---"
 ps -ef | grep "[s]leep"
 
 echo "--- УБИВАЕМ ПРОЦЕСС НОМЕР 2 ---"
-P2=$(ps -ef | grep "[s]leep" | awk 'NR==2{print $2}')
+
+# стабильный поиск второго процесса (НЕ через NR==2)
+P2=$(pgrep -f "/bin/sleep.*out2" | head -n 1)
+
 if [ ! -z "$P2" ]; then
     kill -9 $P2
     echo "Убит PID $P2. Ждем рестарта..."
@@ -38,8 +44,11 @@ echo "--- ПРОВЕРКА ПОСЛЕ РЕСТАРТА ---"
 ps -ef | grep "[s]leep"
 
 echo "--- SIGHUP (смена на 1 процесс) ---"
+
 echo "/bin/sleep $CUR/in $CUR/out_single" > "$CFG"
-pkill -HUP myinit
+
+# отправляем сигнал строго в нужный myinit
+kill -HUP $MYINIT_PID
 sleep 1
 
 echo "--- ФИНАЛЬНАЯ ПРОВЕРКА ---"
@@ -47,3 +56,6 @@ ps -ef | grep "[s]leep"
 
 echo "--- ЛОГ ---"
 cat "$LOG"
+
+echo "--- ПРОВЕРКА КОЛИЧЕСТВА PROCESSES ---"
+echo "sleep count: $(pgrep -f /bin/sleep | wc -l)"
